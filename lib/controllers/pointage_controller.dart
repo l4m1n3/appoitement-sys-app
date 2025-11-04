@@ -1,273 +1,138 @@
-// import 'package:dio/dio.dart';
-// import 'package:get/get.dart';
-// import 'package:flutter_blue_plus/flutter_blue_plus.dart';
-// import '../services/api_service.dart';
-// import '../controllers/auth_controller.dart';
-// import 'package:permission_handler/permission_handler.dart';
-// class PointageController extends GetxController {
-//   final ApiService _api = ApiService();
-//   final AuthController _auth = Get.find<AuthController>();
-
-//   var devicesList = <BluetoothDevice>[].obs;
-//   var authorizedMacs = <String>[].obs;
-//   var selectedDevice = Rxn<BluetoothDevice>();
-//   var isScanning = false.obs;
-//   var isLoading = false.obs;
-//   var message = "".obs;
-//   var isConnected = false.obs;
-
-//   @override
-//   void onInit() {
-//     super.onInit();
-//     fetchAuthorizedPortiques(); // Chargement au démarrage
-//   }
-
-//   Future<void> _checkPermissions() async {
-//     Map<Permission, PermissionStatus> statuses = await [
-//       Permission.bluetoothScan,
-//       Permission.bluetoothConnect,
-//       Permission.location,
-//     ].request();
-
-//     if (statuses.values.any((s) => !s.isGranted)) {
-//       message.value = "Permissions Bluetooth requises";
-//       throw Exception("Permissions manquantes");
-//     }
-//   }
-
-//   Future<void> fetchAuthorizedPortiques() async {
-//     final token = _auth.token;
-//     if (token == null) return;
-
-//     try {
-//       authorizedMacs.value = await _api.getAuthorizedPortiques(token);
-//     } catch (e) {
-//       message.value = "Erreur: Portiques non récupérés";
-//     }
-//   }
-
-//   Future<void> scanDevices() async {
-//     devicesList.clear();
-//     message.value = "Scan en cours...";
-//     isScanning.value = true;
-
-//     try {
-//       await _checkPermissions();
-//       await fetchAuthorizedPortiques();
-//     } catch (e) {
-//       isScanning.value = false;
-//       return;
-//     }
-
-//     await FlutterBluePlus.startScan(timeout: Duration(seconds: 5));
-//     FlutterBluePlus.scanResults.listen((results) {
-//       for (var r in results) {
-//         final device = r.device;
-//         final mac = device.remoteId.str;
-//         if (authorizedMacs.contains(mac) && !devicesList.any((d) => d.remoteId == device.remoteId)) {
-//           devicesList.add(device);
-//         }
-//       }
-//     });
-
-//     await Future.delayed(Duration(seconds: 5));
-//     await FlutterBluePlus.stopScan();
-//     isScanning.value = false;
-//     message.value = "Scan terminé : ${devicesList.length} portique(s) trouvé(s)";
-//   }
-
-//   Future<void> connectToDevice(BluetoothDevice device) async {
-//     message.value = "Connexion à ${device.platformName}...";
-//     isLoading.value = true;
-//     try {
-//       await device.connect(timeout: Duration(seconds: 10), license: License.free);
-//       selectedDevice.value = device;
-//       isConnected.value = true;
-//       message.value = "Connecté à ${device.platformName}";
-//     } catch (e) {
-//       message.value = "Échec connexion : $e";
-//     } finally {
-//       isLoading.value = false;
-//     }
-//   }
-
-//   Future<void> disconnect() async {
-//     final device = selectedDevice.value;
-//     if (device != null) {
-//       await device.disconnect();
-//       selectedDevice.value = null;
-//       isConnected.value = false;
-//       message.value = "Déconnecté";
-//     }
-//   }
-
-//   Future<void> pointer(String action) async {
-//   final token = _auth.token;
-//   final device = selectedDevice.value;
-//   if (token == null || device == null) {
-//     message.value = "Connexion ou portique manquant";
-//     return;
-//   }
-
-//   isLoading.value = true;
-//   try {
-//     final response = await _api.pointer(token, action, device.remoteId.str);
-    
-//     // Le backend renvoie le pointage complet
-//     final pointage = response.data;
-//     message.value = "Pointage ${pointage['type']} enregistré à ${pointage['date_heure']}";
-//   } on DioException catch (e) {
-//     String error = "Erreur";
-//     if (e.response?.data != null) {
-//       error = e.response!.data['error'] ?? "Erreur serveur";
-//     }
-//     message.value = error;
-//   } finally {
-//     isLoading.value = false;
-//   }
-// }
-// }
+// controllers/pointage_controller.dart
 import 'package:dio/dio.dart';
 import 'package:get/get.dart';
-import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:geolocator/geolocator.dart';
 import '../services/api_service.dart';
 import '../controllers/auth_controller.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 class PointageController extends GetxController {
   final ApiService _api = ApiService();
   final AuthController _auth = Get.find<AuthController>();
 
-  var devicesList = <BluetoothDevice>[].obs;
-  var authorizedMacs = <String>[].obs;
-  var selectedDevice = Rxn<BluetoothDevice>();
-  var isScanning = false.obs;
+  // États observables
   var isLoading = false.obs;
   var message = "".obs;
-  var isConnected = false.obs;
+  var lastPointage = Rxn<Map<String, dynamic>>();
+  var isInsideZone = false.obs;
 
-  /// Détermine si on filtre les appareils par les MAC autorisées ou pas
-  var filterAuthorizedOnly = false.obs;
+  // Configuration de la zone autorisée
+  static const double entrepriseLat = 13.5116;
+  static const double entrepriseLng = 2.1254;
+  static const double rayonMetres = 100.0;
 
   @override
   void onInit() {
     super.onInit();
-    fetchAuthorizedPortiques();
+    _checkPermissionAndLoad();
   }
 
-  Future<void> _checkPermissions() async {
-    Map<Permission, PermissionStatus> statuses = await [
-      Permission.bluetoothScan,
-      Permission.bluetoothConnect,
-      Permission.location,
-    ].request();
-
-    if (statuses.values.any((s) => !s.isGranted)) {
-      message.value = "Permissions Bluetooth requises";
-      throw Exception("Permissions manquantes");
-    }
-  }
-
-  Future<void> fetchAuthorizedPortiques() async {
-    final token = _auth.token;
-    if (token == null) return;
-
-    try {
-      authorizedMacs.value = await _api.getAuthorizedPortiques(token);
-    } catch (e) {
-      message.value = "Erreur: Portiques non récupérés";
-    }
-  }
-
-  Future<void> scanDevices({bool filterOnly = false}) async {
-    devicesList.clear();
-    message.value = "Scan en cours...";
-    isScanning.value = true;
-    filterAuthorizedOnly.value = filterOnly;
-
-    try {
-      await _checkPermissions();
-      await fetchAuthorizedPortiques();
-    } catch (e) {
-      isScanning.value = false;
+  /// Vérifie les permissions et charge le dernier pointage
+  Future<void> _checkPermissionAndLoad() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      message.value = "Veuillez activer la localisation";
       return;
     }
 
-    // Démarre le scan
-    await FlutterBluePlus.startScan(timeout: const Duration(seconds: 5));
-
-    FlutterBluePlus.scanResults.listen((results) {
-      for (var r in results) {
-        final device = r.device;
-        final mac = device.remoteId.str;
-
-        // ✅ Si on veut tous les périphériques
-        if (!filterAuthorizedOnly.value) {
-          if (!devicesList.any((d) => d.remoteId == device.remoteId)) {
-            devicesList.add(device);
-          }
-        } 
-        // ✅ Sinon, on filtre par les MAC autorisées
-        else if (authorizedMacs.contains(mac) &&
-            !devicesList.any((d) => d.remoteId == device.remoteId)) {
-          devicesList.add(device);
-        }
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        message.value = "Permission de localisation refusée";
+        return;
       }
-    });
-
-    await Future.delayed(const Duration(seconds: 5));
-    await FlutterBluePlus.stopScan();
-
-    isScanning.value = false;
-    message.value =
-        "Scan terminé : ${devicesList.length} périphérique(s) trouvé(s)";
-  }
-
-  Future<void> connectToDevice(BluetoothDevice device) async {
-    message.value = "Connexion à ${device.platformName}...";
-    isLoading.value = true;
-    try {
-      await device.connect(timeout: const Duration(seconds: 10), license: License.free);
-      selectedDevice.value = device;
-      isConnected.value = true;
-      message.value = "Connecté à ${device.platformName}";
-    } catch (e) {
-      message.value = "Échec connexion : $e";
-    } finally {
-      isLoading.value = false;
     }
-  }
 
-  Future<void> disconnect() async {
-    final device = selectedDevice.value;
-    if (device != null) {
-      await device.disconnect();
-      selectedDevice.value = null;
-      isConnected.value = false;
-      message.value = "Déconnecté";
+    if (permission == LocationPermission.deniedForever) {
+      message.value = "Permission bloquée définitivement";
+      return;
     }
+
+    await fetchLastPointage();
   }
 
-  Future<void> pointer(String action) async {
+  /// Récupère le dernier pointage
+  Future<void> fetchLastPointage() async {
     final token = _auth.token;
-    final device = selectedDevice.value;
-    if (token == null || device == null) {
-      message.value = "Connexion ou portique manquant";
+    final employeId = _auth.userId;
+    if (token == null || employeId == null) return;
+    try {
+      final pointage = await _api.getDernierPointage(
+        token: token,
+        employeId: employeId,
+      );
+      lastPointage.value = pointage;
+    } catch (e) {
+      // Silencieux si pas de pointage
+    }
+  }
+
+  /// Récupère la position actuelle
+  Future<Position?> _getCurrentPosition() async {
+    try {
+      return await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 10),
+      );
+    } catch (e) {
+      message.value = "Impossible d'obtenir la position GPS";
+      return null;
+    }
+  }
+
+  /// Effectue un pointage
+  Future<void> pointer(String type) async {
+    final token = _auth.token;
+    if (token == null) {
+      message.value = "Non authentifié";
       return;
     }
 
     isLoading.value = true;
+    message.value = "Récupération de la position...";
+
+    final position = await _getCurrentPosition();
+    if (position == null) {
+      isLoading.value = false;
+      return;
+    }
+
+    // Calcul de la distance
+    final distance = Geolocator.distanceBetween(
+      position.latitude,
+      position.longitude,
+      entrepriseLat,
+      entrepriseLng,
+    );
+
+    if (distance > rayonMetres) {
+      message.value = "Hors zone (${distance.toStringAsFixed(0)} m)";
+      isInsideZone.value = false;
+      isLoading.value = false;
+      return;
+    }
+
+    isInsideZone.value = true;
+
     try {
-      final response = await _api.pointer(token, action, device.remoteId.str);
+      final response = await _api.pointerGps(
+        token: token,
+        type: type,
+        latitude: position.latitude,
+        longitude: position.longitude,
+      );
+
       final pointage = response.data;
-      message.value =
-          "Pointage ${pointage['type']} enregistré à ${pointage['date_heure']}";
+      lastPointage.value = pointage;
+      message.value = "Pointage ${pointage['type']} à ${pointage['date_heure']}";
     } on DioException catch (e) {
-      String error = "Erreur";
-      if (e.response?.data != null) {
-        error = e.response!.data['error'] ?? "Erreur serveur";
+      String error = e.message ?? "Erreur serveur";
+      if (e.response?.data is Map && e.response!.data['error'] != null) {
+        error = e.response!.data['error'];
       }
       message.value = error;
+    } catch (e) {
+      message.value = "Erreur inattendue";
     } finally {
       isLoading.value = false;
     }
