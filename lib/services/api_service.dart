@@ -81,7 +81,7 @@ class ApiService {
   late final Dio _dio;
 
   // Base URL (configurable)
-  static const String _baseUrl = "http://10.0.2.2:8000/api"; // Émulateur Android
+  static const String _baseUrl = "http://192.168.1.167:8000/api"; // Émulateur Android
   // Pour iOS Simulator : "http://localhost:8000/api"
   // Pour appareil réel : "http://192.168.x.x:8000/api"
 
@@ -156,7 +156,7 @@ class ApiService {
   // ──────────────────────────────────────────────────────────────
   // 1. Connexion utilisateur
   // ──────────────────────────────────────────────────────────────
-  Future<Response> login(String email, String password) async {
+  Future<Response> login(String email, String password,) async {
     return await _dio.post(
       "/login",
       data: {
@@ -236,7 +236,7 @@ class ApiService {
   }) async {
     try {
       final response = await _dio.get(
-        '/pointages/dernier/$employeId',
+        '/pointages/employe/$employeId/dernier',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
 

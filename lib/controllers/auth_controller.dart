@@ -125,6 +125,12 @@ import '../services/api_service.dart';
 class AuthController extends GetxController {
   final ApiService _api = ApiService();
   final box = GetStorage();
+  var showPassword = false.obs;
+  var errorMessage = "".obs;
+
+  void togglePassword() {
+    showPassword.value = !showPassword.value;
+  }
 
   var isLoading = false.obs;
   var user = Rxn<Map<String, dynamic>>();
@@ -156,8 +162,7 @@ class AuthController extends GetxController {
         this.token = token;
         user.value = userData;
 
-        Get.offAll(() => PointageScreen());
-        
+        Get.offAllNamed('/home'); // CORRECT
       } else {
         Get.snackbar("Erreur", "Réponse invalide du serveur");
       }
@@ -167,9 +172,15 @@ class AuthController extends GetxController {
         final errors = e.response?.data['errors'];
         error = errors?['email']?[0] ?? "Identifiants incorrects";
       }
-      Get.snackbar("Erreur", error, backgroundColor: Colors.red, colorText: Colors.white);
+      Get.snackbar(
+        "Erreur",
+        error,
+        backgroundColor: Colors.red,
+        colorText: Colors.white,
+      );
     } catch (e) {
-      Get.snackbar("Erreur", "Erreur inattendue");
+      Get.snackbar("Erreur", "Erreur inattendue: " + e.toString());
+      print(e.toString());
     } finally {
       isLoading.value = false;
     }
@@ -178,6 +189,8 @@ class AuthController extends GetxController {
   // --- Token avec persistance ---
   String? _token;
   String? get token => _token ?? box.read('token');
+  // Ajoute cette ligne dans AuthController
+  bool get isLoggedIn => token != null && user.value != null;
   set token(String? value) {
     _token = value;
     if (value == null) {
