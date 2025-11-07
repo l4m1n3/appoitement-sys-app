@@ -1,77 +1,3 @@
-
-// import 'package:dio/dio.dart';
-
-// class ApiService {
-//   final Dio _dio = Dio(
-//     BaseOptions(
-//       baseUrl: "http://10.0.2.2:8000/api", // OK pour émulateur Android
-//       connectTimeout: const Duration(seconds: 10),
-//       receiveTimeout: const Duration(seconds: 10),
-//       headers: {
-//         'Accept': 'application/json',
-//         'Content-Type': 'application/json',
-//       },
-//     ),
-//   );
-
-//   /// Connexion utilisateur
-//   Future<Response> login(String email, String password) async {
-//     return await _dio.post(
-//       "/login",
-//       data: {"email": email, "password": password},
-//     );
-//   }
-
-//   /// Récupère la liste des MAC autorisés
-//   Future<List<String>> getAuthorizedPortiques(String token) async {
-//     try {
-//       final response = await _dio.get(
-//         '/portiques/authorized', // ← Endpoint corrigé
-//         options: Options(headers: {'Authorization': 'Bearer $token'}),
-//       );
-
-//       if (response.statusCode == 200) {
-//         // Le backend renvoie : ["AA:BB:CC:...", ...]
-//         final List<dynamic> data = response.data;
-//         return data.map((e) => e.toString()).toList();
-//       }
-//     } on DioException catch (e) {
-//       print("Erreur getAuthorizedPortiques: ${e.message}");
-//     }
-//     return [];
-//   }
-
-//   /// Envoie un pointage
-//   Future<Response> pointer(
-//     String token,
-//     String action,
-//     String macAddress,
-//   ) async {
-//     // Normalisation : "Entrée" → "entrée"
-//     final type = action.toLowerCase() == 'entrée' ? 'entrée' : 'sortie';
-
-//     return await _dio.post(
-//       '/pointages', // ← Endpoint correct
-//       data: {"portique_mac": macAddress, "type": type},
-//       options: Options(headers: {"Authorization": "Bearer $token"}),
-//     );
-//   }
-
-//   // Optionnel : Récupérer le portique actuel (si besoin)
-//   Future<String?> getCurrentPortiqueMac(String token) async {
-//     try {
-//       final response = await _dio.get(
-//         '/portiques/authorized',
-//         options: Options(headers: {'Authorization': 'Bearer $token'}),
-//       );
-//       final List<dynamic> macs = response.data;
-//       return macs.isNotEmpty ? macs.first : null;
-//     } catch (e) {
-//       return null;
-//     }
-//   }
-// }
-// services/api_service.dart
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
@@ -81,23 +7,26 @@ class ApiService {
   late final Dio _dio;
 
   // Base URL (configurable)
-  static const String _baseUrl = "http://192.168.1.167:8000/api"; // Émulateur Android
+  static const String _baseUrl =
+      "https://10.0.2.2:8000/api"; // Émulateur Android
   // Pour iOS Simulator : "http://localhost:8000/api"
   // Pour appareil réel : "http://192.168.x.x:8000/api"
 
   // Constructeur
   ApiService() {
-    _dio = Dio(BaseOptions(
-      baseUrl: _baseUrl,
-      connectTimeout: const Duration(seconds: 12),
-      receiveTimeout: const Duration(seconds: 12),
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-      },
-      // Réponse JSON automatique
-      responseType: ResponseType.json,
-    ));
+    _dio = Dio(
+      BaseOptions(
+        baseUrl: _baseUrl,
+        connectTimeout: const Duration(seconds: 12),
+        receiveTimeout: const Duration(seconds: 12),
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        // Réponse JSON automatique
+        responseType: ResponseType.json,
+      ),
+    );
 
     // Intercepteurs
     _setupInterceptors();
@@ -140,7 +69,7 @@ class ApiService {
                 ? data['error']
                 : "Erreur ${e.response!.statusCode}";
           } else if (e.type == DioExceptionType.connectionTimeout ||
-                     e.type == DioExceptionType.receiveTimeout) {
+              e.type == DioExceptionType.receiveTimeout) {
             errorMessage = "Délai d'attente dépassé";
           } else if (e.type == DioExceptionType.connectionError) {
             errorMessage = "Pas de connexion Internet";
@@ -156,13 +85,10 @@ class ApiService {
   // ──────────────────────────────────────────────────────────────
   // 1. Connexion utilisateur
   // ──────────────────────────────────────────────────────────────
-  Future<Response> login(String email, String password,) async {
+  Future<Response> login(String email, String password) async {
     return await _dio.post(
       "/login",
-      data: {
-        "email": email,
-        "password": password,
-      },
+      data: {"email": email, "password": password},
     );
   }
 
@@ -182,28 +108,31 @@ class ApiService {
         'latitude': latitude,
         'longitude': longitude,
       },
-      options: Options(
-        headers: {"Authorization": "Bearer $token"},
-      ),
+      options: Options(headers: {"Authorization": "Bearer $token"}),
     );
   }
 
   // ──────────────────────────────────────────────────────────────
-  // 3. Pointage via Portique Bluetooth (OPTIONNEL)
+  // POINTAGE VIA PORTIQUE BLUETOOTH (NOUVELLE API)
   // ──────────────────────────────────────────────────────────────
   Future<Response> pointerPortique({
     required String token,
-    required String type,
-    required String macAddress,
+    required String type, // "entrée" ou "sortie"
+    required String macAddress, // ex: "AA:BB:CC:11:22:33"
   }) async {
     return await _dio.post(
-      '/pointages',
+      '/pointages/bluetooth', // Nouvelle route
       data: {
-        'type': type.toLowerCase(),
-        'portique_mac': macAddress,
+        'type': type.toLowerCase(), // "entrée" ou "sortie"
+        'portique_mac': macAddress.toUpperCase(), // Format MAC standard
       },
       options: Options(
-        headers: {"Authorization": "Bearer $token"},
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        validateStatus: (status) => status! < 500, // Gérer les erreurs 4xx
       ),
     );
   }
@@ -272,7 +201,9 @@ class ApiService {
   // ──────────────────────────────────────────────────────────────
   Future<bool> checkConnectivity() async {
     try {
-      final response = await _dio.get('/health').timeout(const Duration(seconds: 5));
+      final response = await _dio
+          .get('/health')
+          .timeout(const Duration(seconds: 5));
       return response.statusCode == 200;
     } catch (e) {
       return false;
